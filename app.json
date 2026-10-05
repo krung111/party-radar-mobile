@@ -1,1 +1,52 @@
-{"expo":{"android":{"adaptiveIcon":{"backgroundColor":"#04060c","backgroundImage":"./assets/android-icon-background.png","foregroundImage":"./assets/android-icon-foreground.png","monochromeImage":"./assets/android-icon-monochrome.png"},"package":"com.partyradar.mobile","predictiveBackGestureEnabled":false},"experiments":{"typedRoutes":true},"icon":"./assets/icon.png","ios":{"bundleIdentifier":"com.partyradar.mobile","supportsTablet":true},"name":"Party Radar","orientation":"portrait","plugins":["expo-router","@maplibre/maplibre-react-native",["expo-location",{"locationAlwaysAndWhenInUsePermission":"Allow Party Radar to use your location so your party can see you on the map."}]],"scheme":"partyradar","slug":"party-radar-mobile","userInterfaceStyle":"dark","version":"1.0.0","web":{"favicon":"./assets/favicon.png"}}}
+{
+  "expo": {
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#04060c",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.partyradar.mobile",
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "icon": "./assets/icon.png",
+    "ios": {
+      "bundleIdentifier": "com.partyradar.mobile",
+      "supportsTablet": true
+    },
+    "name": "Party Radar",
+    "orientation": "portrait",
+    "plugins": [
+      "expo-router",
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Party Radar to use your location so your party can see you on the map."
+        }
+      ]
+    ],
+    "scheme": "partyradar",
+    "slug": "party-radar-mobile",
+    "userInterfaceStyle": "dark",
+    "version": "1.0.0",
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9f6344cc-4f14-4959-8d69-15e60086c6bf"
+      }
+    },
+    "owner": "krung0626"
+  }
+}
