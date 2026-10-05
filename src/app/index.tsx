@@ -15,6 +15,16 @@ import {
 import { router } from 'expo-router';
 import { MEMBER_COLORS } from '@/types/party';
 
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function randomCode(): string {
+  let s = '';
+  for (let i = 0; i < 5; i++) {
+    s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  }
+  return s;
+}
+
 export default function JoinScreen() {
   const [roomId, setRoomId] = useState('');
   const [name, setName] = useState('');
@@ -24,16 +34,25 @@ export default function JoinScreen() {
 
   const canJoin = roomId.trim().length > 0 && name.trim().length > 0;
 
-  const onJoin = () => {
-    if (!canJoin) return;
+  const goRoom = (code: string, callsign: string) => {
     router.push({
       pathname: '/room',
       params: {
-        roomId: roomId.trim().toUpperCase().slice(0, 12),
-        name: name.trim().slice(0, 16),
+        roomId: code.trim().toUpperCase().slice(0, 12),
+        name: callsign.trim().slice(0, 16),
         color,
       },
     });
+  };
+
+  const onJoin = () => {
+    if (!canJoin) return;
+    goRoom(roomId, name);
+  };
+
+  const onCreateParty = () => {
+    if (!name.trim()) return;
+    goRoom(randomCode(), name);
   };
 
   return (
@@ -46,18 +65,6 @@ export default function JoinScreen() {
           <Text style={styles.kicker}>SQUAD UPLINK</Text>
           <Text style={styles.title}>Party Radar</Text>
           <Text style={styles.subtitle}>Real-time party finder for your crew</Text>
-
-          <Text style={styles.label}>ROOM CODE</Text>
-          <TextInput
-            value={roomId}
-            onChangeText={(t) => setRoomId(t.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-            placeholder="e.g. AB12C"
-            placeholderTextColor="#475569"
-            maxLength={12}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            style={styles.input}
-          />
 
           <Text style={styles.label}>CALLSIGN</Text>
           <TextInput
@@ -92,12 +99,38 @@ export default function JoinScreen() {
           </View>
 
           <Pressable
-            onPress={onJoin}
-            disabled={!canJoin}
-            style={[styles.deploy, !canJoin && styles.deployDisabled]}
+            onPress={onCreateParty}
+            disabled={!name.trim()}
+            style={[styles.deploy, !name.trim() && styles.deployDisabled]}
           >
-            <Text style={styles.deployText}>DEPLOY</Text>
+            <Text style={styles.deployText}>CREATE PARTY</Text>
           </Pressable>
+
+          <View style={styles.orRow}>
+            <View style={styles.orLine} />
+            <Text style={styles.orText}>OR</Text>
+            <View style={styles.orLine} />
+          </View>
+
+          <View style={styles.joinRow}>
+            <TextInput
+              value={roomId}
+              onChangeText={(t) => setRoomId(t.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+              placeholder="ROOM CODE"
+              placeholderTextColor="#475569"
+              maxLength={12}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={[styles.input, styles.joinInput]}
+            />
+            <Pressable
+              onPress={onJoin}
+              disabled={!canJoin}
+              style={[styles.joinBtn, !canJoin && styles.deployDisabled]}
+            >
+              <Text style={styles.joinBtnText}>JOIN</Text>
+            </Pressable>
+          </View>
 
           <Text style={styles.hint}>
             The app will ask for location access.{'\n'}
@@ -165,6 +198,19 @@ const styles = StyleSheet.create({
   },
   deployDisabled: { opacity: 0.4 },
   deployText: { color: '#04060c', fontWeight: '800', letterSpacing: 3, fontSize: 14 },
+  orRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 16 },
+  orLine: { flex: 1, height: 1, backgroundColor: '#1e293b' },
+  orText: { fontSize: 10, letterSpacing: 3, color: '#475569', fontWeight: '700' },
+  joinRow: { flexDirection: 'row', gap: 8 },
+  joinInput: { flex: 1, marginTop: 0, letterSpacing: 3 },
+  joinBtn: {
+    borderWidth: 1,
+    borderColor: '#0e7490',
+    borderRadius: 8,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+  },
+  joinBtnText: { color: '#67e8f9', fontWeight: '800', letterSpacing: 2, fontSize: 14 },
   hint: {
     marginTop: 14,
     textAlign: 'center',

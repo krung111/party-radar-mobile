@@ -1,9 +1,10 @@
 /**
- * /room — the live party session on a real map.
+ * /room — the live party session.
+ * Radar HUD first (like the web app), with a FULL MAP toggle.
  * MapLibre (OpenStreetMap tiles, no API keys) + Supabase Realtime sync.
  *
  * Interactions mirror the web app:
- *  - Long-press the map to drop a waypoint ping (2 s cooldown).
+ *  - Tap the radar (or long-press the map) to drop a waypoint ping (2 s cooldown).
  *  - Tap a member or someone else's ping to route there.
  *  - Tap YOUR ping to remove it for everyone.
  */
@@ -19,12 +20,17 @@ import {
   Map,
   Marker,
   type CameraRef,
+  type LngLatBounds,
 } from '@maplibre/maplibre-react-native';
 import { usePartySync } from '@/hooks/usePartySync';
 import MemberList from '@/components/MemberList';
+import PartyRadar from '@/components/PartyRadar';
 import { OSM_RASTER_STYLE } from '@/lib/mapStyle';
 import { formatDistance, formatDuration } from '@/lib/geo';
 import type { Coordinates, RouteProfile } from '@/types/party';
+
+/** Selectable radar ranges in meters. */
+const RANGES = [100, 250, 500, 1000, 2000];
 
 export default function RoomScreen() {
   const params = useLocalSearchParams<{ roomId?: string; name?: string; color?: string }>();
@@ -33,12 +39,15 @@ export default function RoomScreen() {
   const color = params.color ?? '#22d3ee';
 
   const sync = usePartySync(roomId, name, color);
+  const [expanded, setExpanded] = useState(false);
+  const [rangeIdx, setRangeIdx] = useState(1); // default 250 m
   const [followMode, setFollowMode] = useState(true);
   const [flash, setFlash] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const cameraRef = useRef<CameraRef>(null);
   const hasCenteredRef = useRef(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const range = RANGES[rangeIdx];
 
   const showFlash = useCallback((msg: string, ms = 1600) => {
     setFlash(msg);
@@ -50,10 +59,41 @@ export default function RoomScreen() {
     if (flashTimer.current) clearTimeout(flashTimer.current);
   }, []);
 
-  // Follow the local player until the user pans the map themselves.
   const localPos = sync.localPlayer?.position;
+
+  // Fit the camera to the whole route so it never just "points off-screen".
+  const fitRouteBounds = useCallback(() => {
+    const pts: [number, number][] = [];
+    if (sync.activeRoute) {
+      for (const [lat, lng] of sync.activeRoute.polyline) pts.push([lng, lat]);
+    } else if (sync.routeFallback && localPos) {
+      const d = sync.routeFallback.dest;
+      pts.push([localPos.lng, localPos.lat], [d.lng, d.lat]);
+    }
+    if (pts.length < 2) return;
+    const lngs = pts.map((p) => p[0]);
+    const lats = pts.map((p) => p[1]);
+    const pad = 0.003;
+    const bounds: LngLatBounds = [
+      Math.min(...lngs) - pad,
+      Math.min(...lats) - pad,
+      Math.max(...lngs) + pad,
+      Math.max(...lats) + pad,
+    ];
+    cameraRef.current?.fitBounds(bounds, { duration: 600 });
+    setFollowMode(false);
+  }, [sync.activeRoute, sync.routeFallback, localPos]);
+
+  // When a route appears while the map is showing, frame the whole route.
+  const routeKey = sync.activeRoute?.id ?? sync.routeFallback?.label ?? null;
   useEffect(() => {
-    if (!localPos || !followMode) return;
+    if (routeKey && expanded) fitRouteBounds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, expanded]);
+
+  // Follow the local player until the user pans the map themselves.
+  useEffect(() => {
+    if (!localPos || !followMode || !expanded) return;
     const target = { center: [localPos.lng, localPos.lat] as [number, number] };
     if (!hasCenteredRef.current) {
       hasCenteredRef.current = true;
@@ -61,14 +101,38 @@ export default function RoomScreen() {
     } else {
       cameraRef.current?.easeTo({ ...target, duration: 400 });
     }
-  }, [localPos, followMode]);
+  }, [localPos, followMode, expanded]);
 
-  const handleLongPressMap = useCallback(
-    (lng: number, lat: number) => {
-      const sent = sync.sendPing({ lat, lng });
+  // When the map view opens, frame the route if there is one, else center on you.
+  useEffect(() => {
+    if (!expanded) return;
+    if (routeKey) {
+      // Let the map mount before moving the camera.
+      const t = setTimeout(fitRouteBounds, 400);
+      return () => clearTimeout(t);
+    }
+    if (localPos && !hasCenteredRef.current) {
+      hasCenteredRef.current = true;
+      const t = setTimeout(() => {
+        cameraRef.current?.easeTo({ center: [localPos.lng, localPos.lat], zoom: 15, duration: 800 });
+      }, 400);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
+
+  const handlePing = useCallback(
+    (coords: Coordinates) => {
+      const sent = sync.sendPing(coords);
       showFlash(sent ? 'WAYPOINT PING BROADCAST' : 'PING COOLDOWN — WAIT A BEAT');
     },
     [sync, showFlash],
+  );
+
+  const handleLongPressMap = useCallback(
+    (lng: number, lat: number) => handlePing({ lat, lng }),
+    [handlePing],
   );
 
   const handleRouteTo = useCallback(
@@ -102,6 +166,9 @@ export default function RoomScreen() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [roomId]);
+
+  const zoom = (dir: 1 | -1) =>
+    setRangeIdx((i) => Math.min(RANGES.length - 1, Math.max(0, i + dir)));
 
   const routeLine = useMemo(() => {
     if (!sync.activeRoute) return null;
@@ -140,117 +207,148 @@ export default function RoomScreen() {
 
   return (
     <View style={styles.root}>
-      <Map
-        style={styles.map}
-        mapStyle={OSM_RASTER_STYLE}
-        attribution
-        logo={false}
-        onLongPress={(e) => {
-          const [lng, lat] = e.nativeEvent.lngLat;
-          handleLongPressMap(lng, lat);
-        }}
-        onRegionDidChange={(e) => {
-          if (e.nativeEvent.userInteraction) setFollowMode(false);
-        }}
-      >
-        <Camera ref={cameraRef} />
+      {expanded ? (
+        <Map
+          style={styles.map}
+          mapStyle={OSM_RASTER_STYLE}
+          attribution
+          logo={false}
+          onLongPress={(e) => {
+            const [lng, lat] = e.nativeEvent.lngLat;
+            handleLongPressMap(lng, lat);
+          }}
+          onRegionDidChange={(e) => {
+            if (e.nativeEvent.userInteraction) setFollowMode(false);
+          }}
+        >
+          <Camera ref={cameraRef} />
 
-        {/* route polylines */}
-        {routeLine && (
-          <GeoJSONSource id="route-source" data={routeLine}>
-            <Layer
-              id="route-line"
-              type="line"
-              style={{ lineColor: '#22d3ee', lineWidth: 4, lineOpacity: 0.9 }}
-            />
-          </GeoJSONSource>
-        )}
-        {fallbackLine && (
-          <GeoJSONSource id="fallback-source" data={fallbackLine}>
-            <Layer
-              id="fallback-line"
-              type="line"
-              style={{
-                lineColor: '#f59e0b',
-                lineWidth: 3,
-                lineDasharray: [2, 2],
-                lineOpacity: 0.9,
-              }}
-            />
-          </GeoJSONSource>
-        )}
+          {/* route polylines */}
+          {routeLine && (
+            <GeoJSONSource id="route-source" data={routeLine}>
+              <Layer
+                id="route-line"
+                type="line"
+                style={{ lineColor: '#22d3ee', lineWidth: 4, lineOpacity: 0.9 }}
+              />
+            </GeoJSONSource>
+          )}
+          {fallbackLine && (
+            <GeoJSONSource id="fallback-source" data={fallbackLine}>
+              <Layer
+                id="fallback-line"
+                type="line"
+                style={{
+                  lineColor: '#f59e0b',
+                  lineWidth: 3,
+                  lineDasharray: [2, 2],
+                  lineOpacity: 0.9,
+                }}
+              />
+            </GeoJSONSource>
+          )}
 
-        {/* local player */}
-        {sync.localPlayer && (
-          <Marker id="__me" lngLat={[localPos!.lng, localPos!.lat]}>
-            <View style={styles.meWrap}>
-              {sync.localPlayer.heading != null && (
+          {/* local player */}
+          {sync.localPlayer && (
+            <Marker id="__me" lngLat={[localPos!.lng, localPos!.lat]}>
+              <View style={styles.meWrap}>
+                {sync.localPlayer.heading != null && (
+                  <View
+                    style={[
+                      styles.wedge,
+                      { transform: [{ rotate: `${sync.localPlayer.heading}deg` }] },
+                    ]}
+                  />
+                )}
                 <View
                   style={[
-                    styles.wedge,
-                    { transform: [{ rotate: `${sync.localPlayer.heading}deg` }] },
+                    styles.meDot,
+                    { backgroundColor: sync.displayColor, shadowColor: sync.displayColor },
                   ]}
                 />
-              )}
-              <View
-                style={[
-                  styles.meDot,
-                  { backgroundColor: sync.displayColor, shadowColor: sync.displayColor },
-                ]}
-              />
-            </View>
-          </Marker>
-        )}
+              </View>
+            </Marker>
+          )}
 
-        {/* squad members — tap to route */}
-        {sync.members.map((m) => (
-          <Marker
-            key={m.id}
-            id={m.id}
-            lngLat={[m.position.lng, m.position.lat]}
-            onPress={() => handleRouteTo(m.position, m.name)}
-          >
-            <View style={styles.memberWrap}>
-              <View
-                style={[
-                  styles.memberDot,
-                  { backgroundColor: m.color, shadowColor: m.color },
-                ]}
-              />
-              <Text style={styles.markerLabel}>{m.name}</Text>
-            </View>
-          </Marker>
-        ))}
+          {/* squad members — tap to route */}
+          {sync.members.map((m) => (
+            <Marker
+              key={m.id}
+              id={m.id}
+              lngLat={[m.position.lng, m.position.lat]}
+              onPress={() => handleRouteTo(m.position, m.name)}
+            >
+              <View style={styles.memberWrap}>
+                <View
+                  style={[
+                    styles.memberDot,
+                    { backgroundColor: m.color, shadowColor: m.color },
+                  ]}
+                />
+                <Text style={styles.markerLabel}>{m.name}</Text>
+              </View>
+            </Marker>
+          ))}
 
-        {/* pings — tap yours to remove, others' to route */}
-        {sync.pings.map((p) => (
-          <Marker
-            key={p.id}
-            id={p.id}
-            lngLat={[p.lng, p.lat]}
-            onPress={() =>
-              p.createdById === sync.localId
-                ? handleRemovePing(p.id)
-                : handleRouteTo({ lat: p.lat, lng: p.lng }, `PING by ${p.createdByName}`)
-            }
-          >
-            <View style={[styles.ping, { backgroundColor: p.color, shadowColor: p.color }]} />
-          </Marker>
-        ))}
+          {/* pings — tap yours to remove, others' to route */}
+          {sync.pings.map((p) => (
+            <Marker
+              key={p.id}
+              id={p.id}
+              lngLat={[p.lng, p.lat]}
+              onPress={() =>
+                p.createdById === sync.localId
+                  ? handleRemovePing(p.id)
+                  : handleRouteTo({ lat: p.lat, lng: p.lng }, `PING by ${p.createdByName}`)
+              }
+            >
+              <View style={[styles.ping, { backgroundColor: p.color, shadowColor: p.color }]} />
+            </Marker>
+          ))}
 
-        {/* shared meetup point */}
-        {sync.meetup && (
-          <Marker id="__meetup" lngLat={[sync.meetup.lng, sync.meetup.lat]}>
-            <View style={styles.meetup}>
-              <Text style={styles.meetupText}>★</Text>
+          {/* shared meetup point */}
+          {sync.meetup && (
+            <Marker id="__meetup" lngLat={[sync.meetup.lng, sync.meetup.lat]}>
+              <View style={styles.meetup}>
+                <Text style={styles.meetupText}>★</Text>
+              </View>
+            </Marker>
+          )}
+        </Map>
+      ) : (
+        <View style={styles.radarWrap}>
+          <PartyRadar
+            localId={sync.localId}
+            localPlayer={sync.localPlayer}
+            members={sync.members}
+            pings={sync.pings}
+            radarRangeM={range}
+            activeRoute={sync.activeRoute}
+            routeFallback={sync.routeFallback}
+            meetup={sync.meetup}
+            onPing={handlePing}
+            onRemovePing={handleRemovePing}
+            onRouteTo={handleRouteTo}
+          />
+          <View style={styles.zoomBtns}>
+            <Pressable onPress={() => zoom(-1)} accessibilityLabel="Zoom radar in" style={styles.zoomBtn}>
+              <Text style={styles.zoomText}>+</Text>
+            </Pressable>
+            <Pressable onPress={() => zoom(1)} accessibilityLabel="Zoom radar out" style={styles.zoomBtn}>
+              <Text style={styles.zoomText}>−</Text>
+            </Pressable>
+          </View>
+          {flash && (
+            <View style={styles.flash}>
+              <Text style={styles.flashText}>{flash}</Text>
             </View>
-          </Marker>
-        )}
-      </Map>
+          )}
+        </View>
+      )}
 
       {/* HUD header */}
-      <SafeAreaView style={styles.header} edges={['top']}>
-        <View style={styles.headerRow}>
+      <SafeAreaView style={styles.header} edges={['top']} pointerEvents="box-none">
+        <View style={styles.headerRow} pointerEvents="auto">
           <Pressable onPress={copyCode} style={styles.roomCode}>
             <Text style={styles.roomCodeText}>
               {roomId} <Text style={styles.copyHint}>{copied ? 'COPIED' : 'COPY'}</Text>
@@ -265,7 +363,7 @@ export default function RoomScreen() {
             </Pressable>
           </View>
         </View>
-        <View style={styles.youRow}>
+        <View style={styles.youRow} pointerEvents="auto">
           <View
             style={[styles.dot, { backgroundColor: sync.displayColor, shadowColor: sync.displayColor }]}
           />
@@ -287,7 +385,7 @@ export default function RoomScreen() {
           </Pressable>
         </View>
       )}
-      {flash && (
+      {expanded && flash && (
         <View style={styles.flash}>
           <Text style={styles.flashText}>{flash}</Text>
         </View>
@@ -334,7 +432,7 @@ export default function RoomScreen() {
                 {formatDuration(sync.activeRoute.durationS)}
               </Text>
               <ProfileToggle profile={sync.routeProfile} onChange={sync.setRouteProfile} />
-              <Pressable onPress={sync.clearRoute}>
+              <Pressable onPress={() => { sync.clearRoute(); setFollowMode(true); }}>
                 <Text style={styles.xBtn}>✕</Text>
               </Pressable>
             </>
@@ -348,7 +446,7 @@ export default function RoomScreen() {
               <Pressable onPress={sync.retryRoute} style={styles.retryBtn}>
                 <Text style={styles.retryText}>RETRY</Text>
               </Pressable>
-              <Pressable onPress={sync.clearRoute}>
+              <Pressable onPress={() => { sync.clearRoute(); setFollowMode(true); }}>
                 <Text style={styles.xBtn}>✕</Text>
               </Pressable>
             </>
@@ -357,16 +455,19 @@ export default function RoomScreen() {
       )}
 
       {/* bottom controls + roster */}
-      <SafeAreaView style={styles.footer} edges={['bottom']}>
-        <View style={styles.controls}>
+      <SafeAreaView style={styles.footer} edges={['bottom']} pointerEvents="box-none">
+        <View style={styles.controls} pointerEvents="auto">
+          <Pressable onPress={() => setExpanded((e) => !e)} style={styles.controlBtn}>
+            <Text style={[styles.controlText, { color: '#67e8f9' }]}>
+              {expanded ? 'RADAR VIEW' : 'FULL MAP'}
+            </Text>
+          </Pressable>
           <Pressable
             onPress={() => {
-              if (sync.localPlayer) {
-                const sent = sync.sendPing(sync.localPlayer.position);
-                showFlash(sent ? 'WAYPOINT PING BROADCAST' : 'PING COOLDOWN — WAIT A BEAT');
-              }
+              if (sync.localPlayer) handlePing(sync.localPlayer.position);
             }}
-            style={styles.controlBtn}
+            disabled={!sync.localPlayer}
+            style={[styles.controlBtn, !sync.localPlayer && styles.disabled]}
           >
             <Text style={[styles.controlText, { color: '#f0abfc' }]}>PING MY LOCATION</Text>
           </Pressable>
@@ -377,22 +478,26 @@ export default function RoomScreen() {
           >
             <Text style={[styles.controlText, { color: '#fcd34d' }]}>MEET UP</Text>
           </Pressable>
-          <Pressable
-            onPress={() => {
-              setFollowMode(true);
-              const p = sync.localPlayer?.position;
-              if (p) cameraRef.current?.easeTo({ center: [p.lng, p.lat], zoom: 15, duration: 600 });
-            }}
-            style={[styles.controlBtn, followMode && styles.controlActive]}
-          >
-            <Text style={[styles.controlText, { color: '#67e8f9' }]}>
-              {followMode ? '◎ FOLLOWING' : '◎ RECENTER'}
-            </Text>
-          </Pressable>
+          {expanded && (
+            <Pressable
+              onPress={() => {
+                setFollowMode(true);
+                const p = sync.localPlayer?.position;
+                if (p) cameraRef.current?.easeTo({ center: [p.lng, p.lat], zoom: 15, duration: 600 });
+              }}
+              style={[styles.controlBtn, followMode && styles.controlActive]}
+            >
+              <Text style={[styles.controlText, { color: '#67e8f9' }]}>
+                {followMode ? '◎ FOLLOWING' : '◎ RECENTER'}
+              </Text>
+            </Pressable>
+          )}
         </View>
-        <MemberList members={sync.members} origin={sync.localPlayer} />
+        <View pointerEvents="auto">
+          <MemberList members={sync.members} origin={sync.localPlayer} />
+        </View>
         <Text style={styles.hint}>
-          LONG-PRESS MAP TO DROP A PIN · TAP A PIN OR MEMBER TO ROUTE · TAP YOUR PIN TO REMOVE IT
+          TAP RADAR TO DROP A PIN · TAP A PIN OR MEMBER TO ROUTE THERE · TAP YOUR PIN TO REMOVE IT
         </Text>
       </SafeAreaView>
     </View>
@@ -426,8 +531,26 @@ function ProfileToggle({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#04060c' },
   map: { ...StyleSheet.absoluteFill },
+  radarWrap: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 120,
+  },
+  zoomBtns: { position: 'absolute', bottom: 190, right: 16, gap: 6 },
+  zoomBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#155e75',
+    borderRadius: 8,
+    backgroundColor: 'rgba(6,10,19,0.9)',
+  },
+  zoomText: { fontSize: 18, color: '#67e8f9', fontWeight: '700' },
 
-  /* markers */
+  /* markers (map view) */
   meWrap: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   wedge: {
     position: 'absolute',
