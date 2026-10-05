@@ -1,0 +1,175 @@
+/**
+ * Join screen: room code + callsign + marker color → pushes to /room.
+ */
+import { useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { router } from 'expo-router';
+import { MEMBER_COLORS } from '@/types/party';
+
+export default function JoinScreen() {
+  const [roomId, setRoomId] = useState('');
+  const [name, setName] = useState('');
+  const [color, setColor] = useState<string>(
+    MEMBER_COLORS[Math.floor(Math.random() * MEMBER_COLORS.length)],
+  );
+
+  const canJoin = roomId.trim().length > 0 && name.trim().length > 0;
+
+  const onJoin = () => {
+    if (!canJoin) return;
+    router.push({
+      pathname: '/room',
+      params: {
+        roomId: roomId.trim().toUpperCase().slice(0, 12),
+        name: name.trim().slice(0, 16),
+        color,
+      },
+    });
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={styles.card}>
+          <Text style={styles.kicker}>SQUAD UPLINK</Text>
+          <Text style={styles.title}>Party Radar</Text>
+          <Text style={styles.subtitle}>Real-time party finder for your crew</Text>
+
+          <Text style={styles.label}>ROOM CODE</Text>
+          <TextInput
+            value={roomId}
+            onChangeText={(t) => setRoomId(t.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+            placeholder="e.g. AB12C"
+            placeholderTextColor="#475569"
+            maxLength={12}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={styles.input}
+          />
+
+          <Text style={styles.label}>CALLSIGN</Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Vex"
+            placeholderTextColor="#475569"
+            maxLength={16}
+            autoCorrect={false}
+            style={styles.input}
+          />
+
+          <Text style={styles.label}>MARKER COLOR</Text>
+          <View style={styles.swatches}>
+            {MEMBER_COLORS.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setColor(c)}
+                accessibilityLabel={`Marker color ${c}`}
+                style={[
+                  styles.swatch,
+                  {
+                    backgroundColor: c,
+                    borderColor: color === c ? '#fff' : 'transparent',
+                    shadowColor: c,
+                    opacity: color === c ? 1 : 0.65,
+                    transform: [{ scale: color === c ? 1.15 : 1 }],
+                  },
+                ]}
+              />
+            ))}
+          </View>
+
+          <Pressable
+            onPress={onJoin}
+            disabled={!canJoin}
+            style={[styles.deploy, !canJoin && styles.deployDisabled]}
+          >
+            <Text style={styles.deployText}>DEPLOY</Text>
+          </Pressable>
+
+          <Text style={styles.hint}>
+            The app will ask for location access.{'\n'}
+            Share the room code so your party can join — web players at the same code see you live.
+          </Text>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#04060c' },
+  scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  card: {
+    borderWidth: 1,
+    borderColor: 'rgba(34,211,238,0.25)',
+    borderRadius: 16,
+    backgroundColor: '#060a13',
+    padding: 24,
+  },
+  kicker: {
+    fontSize: 10,
+    letterSpacing: 3,
+    color: '#22d3ee',
+    fontWeight: '700',
+  },
+  title: { marginTop: 4, fontSize: 28, fontWeight: '800', color: '#f1f5f9' },
+  subtitle: { marginTop: 2, fontSize: 13, color: '#64748b' },
+  label: {
+    marginTop: 20,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    color: '#94a3b8',
+    fontWeight: '600',
+  },
+  input: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 8,
+    backgroundColor: 'rgba(15,23,42,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    color: '#f1f5f9',
+    fontSize: 16,
+  },
+  swatches: { marginTop: 10, flexDirection: 'row', gap: 12 },
+  swatch: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  deploy: {
+    marginTop: 28,
+    borderRadius: 8,
+    backgroundColor: '#0891b2',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  deployDisabled: { opacity: 0.4 },
+  deployText: { color: '#04060c', fontWeight: '800', letterSpacing: 3, fontSize: 14 },
+  hint: {
+    marginTop: 14,
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#64748b',
+  },
+});
